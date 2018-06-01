@@ -9,9 +9,7 @@ namespace Chakra.Hosting
     /// </summary>
     public static class NativeMethods
     {
-#if DEBUG
         private const string DllName = "ChakraCore.dll";
-#endif
 
         /// <summary>
         /// Throws if a native method returns an error code.

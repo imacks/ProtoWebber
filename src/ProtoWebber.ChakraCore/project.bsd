@@ -13,6 +13,9 @@ package {
 }
 frameworks {
 	net462 {
+        compiler {
+            nowarn = ['CS1572', 'CS1573']
+        }
 		dependencies {
 			'System.Net.Http' {
 				type = 'gac'

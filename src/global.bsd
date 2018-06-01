@@ -30,11 +30,11 @@ docServerUrl = 'http://'${gitUser}'.github.io'
 # ------------------
 versioning {
     major = 1
-    minor = 4
+    minor = 0
     revision = 0
     
-    # Default value is 'beta'. You should set it to '' or comment out when releasing a production build
-    suffix = 'beta'
+    # Default value is 'beta'. You should set it to '' when releasing a production build
+    suffix = ''
 
     # The 'build' property takes its value from either 'release-build' or 'debug-build', depending on the configuration.
 
