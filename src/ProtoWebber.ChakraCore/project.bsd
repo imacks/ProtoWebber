@@ -1,0 +1,32 @@
+#include cslib,net462
+
+assemblyDescription = 'Server side scripting middleware for ProtoWebber, powered by the awesome ChakraCore javascript engine.'
+clsCompliant = true
+allowPartialTrust = true
+package {
+	output {
+		nuget {
+			tags = [ 'lizoc', 'testing', 'webserver' ]
+			summary = ${assemblyDescription}
+		}
+	}
+}
+frameworks {
+	net462 {
+		dependencies {
+			'System.Net.Http' {
+				type = 'gac'
+				version = '4.0.0'
+			}
+			'ProtoWebber' {
+				type = 'project'
+			}
+		}
+	}
+}
+dependencies {
+	'Microsoft.ChakraCore' {
+		type = 'package'
+		version = '1.8.4'
+	}
+}

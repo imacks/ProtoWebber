@@ -1,0 +1,30 @@
+#include cslib,csapp
+assemblyDescription = 'Simple web server for local development and testing.'
+clsCompliant = true
+allowPartialTrust = true
+package {
+	output {
+		nuget {
+			tags = [ 'lizoc', 'testing', 'webserver' ]
+			summary = ${assemblyDescription}
+		}
+	}
+}
+frameworks {
+	net462 {
+		dependencies {
+			'System.Net.Http' {
+				type = 'gac'
+				version = '4.0.0'
+			}
+		}
+	}
+}
+dependencies {
+	'ProtoWebber' {
+		type = 'project'
+	}
+	'ProtoWebber.ChakraCore' {
+		type = 'project'
+	}
+}
