@@ -18,6 +18,7 @@ namespace TestWebber
 		private static List<string> _mimeRemove = new List<string>();
 		private static Dictionary<string, string> _mimeAdd = new Dictionary<string, string>();
 		private static bool _disableServerScript = false;
+		private static bool _allowTransverseExecution = false;
 
 		static void Main(string[] args)
 		{
@@ -74,7 +75,7 @@ namespace TestWebber
 					ws = new WebServer(_prefixBinding, new List<IWebServerMiddleware>()
 					{
 						new StaticFileMiddleware(_assetDir, staticFileMiddlewareAcceptRequest, _mimeRemove.ToArray(), _mimeAdd),
-	                    new JavascriptServerMiddleware(_serverScriptDir, javascriptServerMiddlewareAcceptRequest)
+	                    new JavascriptServerMiddleware(_serverScriptDir, javascriptServerMiddlewareAcceptRequest, _allowTransverseExecution)
 					});
 				}
 
@@ -135,12 +136,16 @@ namespace TestWebber
             //Console.WriteLine(@"-s|--websocket    Enables websocket feature.");
             Console.WriteLine(@"-!ss|--disableserverscript");
             Console.WriteLine(@"                  Disables server side scripting.");
+            Console.WriteLine(@"-t|--transverseexecution");
+            Console.WriteLine(@"                  Enables transverse execution of server side scripts.");
+            Console.WriteLine(@"                  e.g. Run http://localhost:8080/foo[.js] if wwwroot\server\foo.js exists.");
+            Console.WriteLine(@"                  Without this, all non-static requests are routed to server\index.js");
             Console.WriteLine(@"-s|--server       Name of server side scripting directory in wwwroot.");
             Console.WriteLine(@"                  Default is 'server'.");
             Console.WriteLine(@"-a|--asset        Name of assets directory in wwwroot. May be specified more than once.");
 			Console.WriteLine(@"                  Default is 'assets'.");
 			Console.WriteLine(@"-m|--mime         Additional mime types. To remove, -<extension>. May be specified more than once.");
-			Console.WriteLine(@"                  To get a list of stock mime type mappings, use testwebber '--show-mimetypes'");
+			Console.WriteLine(@"                  To get a list of stock mime type mappings, use: testwebber --show-mimetypes");
 			Console.WriteLine(@"--show-mimetypes  Shows a list of stock mimetypes. Not to be used with any other parameters.");
 			Console.WriteLine();
 			Console.WriteLine("Common arguments:");
@@ -179,6 +184,7 @@ namespace TestWebber
 			List<string> assetPath = new List<string>();
             string serverScriptPath = null;
             bool disableServerScript = false;
+            bool allowTransverseExecution = false;
 
             for (; lastArg < args.Length; lastArg++)
 			{
@@ -204,6 +210,10 @@ namespace TestWebber
                 else if (IsArg(args[lastArg], "!ss", "disableserverscript"))
                 {
                     disableServerScript = true;
+                }
+                else if (IsArg(args[lastArg], "t", "transverseexecution"))
+                {
+                    allowTransverseExecution = true;
                 }
                 else if (IsArg(args[lastArg], "s", "server"))
                 {
@@ -300,6 +310,8 @@ namespace TestWebber
                 _serverScriptDir = serverScriptPath;
             if (disableServerScript == true)
             	_disableServerScript = true;
+            if (allowTransverseExecution == true)
+            	_allowTransverseExecution = true;
 
 			return true;
 		}

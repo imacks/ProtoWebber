@@ -16,6 +16,7 @@ namespace ProtoWebber
         private Action<string> _logger;
         private Predicate<HttpListenerContext> _acceptRequestFunc;
         private bool _isDisposing = false;
+        private bool _enableDirectoryTransversalExecution = false;
 
         private JavaScriptRuntime _jsRuntime;
         private JavaScriptSourceContext currentSourceContext = JavaScriptSourceContext.FromIntPtr(IntPtr.Zero);
@@ -36,26 +37,37 @@ namespace ProtoWebber
         private string _serverSideJavascriptDefaultPage = "index.js";
 
         public JavascriptServerMiddleware(string rootDir)
-            : this(rootDir, null, false)
+            : this(rootDir, null, false, false)
         {
         }
 
         public JavascriptServerMiddleware(string rootDir, Func<HttpListenerContext, bool> acceptRequest)
-            : this(rootDir, new Predicate<HttpListenerContext>(acceptRequest), true)
+            : this(rootDir, new Predicate<HttpListenerContext>(acceptRequest), false, true)
         {
         }
 
         public JavascriptServerMiddleware(string rootDir, Predicate<HttpListenerContext> acceptRequest)
-            : this(rootDir, acceptRequest, false)
+            : this(rootDir, acceptRequest, false, false)
         {
         }
 
-        private JavascriptServerMiddleware(string rootDir, Predicate<HttpListenerContext> acceptRequest, bool predicateCompat)
+        public JavascriptServerMiddleware(string rootDir, Func<HttpListenerContext, bool> acceptRequest, bool transversalExecution)
+            : this(rootDir, new Predicate<HttpListenerContext>(acceptRequest), transversalExecution, true)
+        {
+        }
+
+        public JavascriptServerMiddleware(string rootDir, Predicate<HttpListenerContext> acceptRequest, bool transversalExecution)
+            : this(rootDir, acceptRequest, transversalExecution, false)
+        {
+        }
+
+        private JavascriptServerMiddleware(string rootDir, Predicate<HttpListenerContext> acceptRequest, bool transversalExecution, bool predicateCompat)
         {
             if (string.IsNullOrEmpty(rootDir))
                 throw new ArgumentNullException("rootDir");
 
             _rootDirectory = rootDir;
+            _enableDirectoryTransversalExecution = transversalExecution;
 
             if (acceptRequest == null)
                 _acceptRequestFunc = (ctx => !ctx.Request.RawUrl.StartsWith("/assets"));
@@ -99,6 +111,12 @@ namespace ProtoWebber
         {
             get { return _rootDirectory; }
             set { _rootDirectory = value; }
+        }
+
+        public bool EnableDirectoryTransversalExecution
+        {
+            get { return _enableDirectoryTransversalExecution; }
+            set { _enableDirectoryTransversalExecution = value; }
         }
 
         public string JavascriptDefaultPage
@@ -174,38 +192,50 @@ namespace ProtoWebber
 
         protected virtual WebResponseData ProcessFileRequest(HttpListenerRequest request)
         {
-            // remove leading /
-            string filename = request.Url.AbsolutePath.Substring(1);
-            bool requestSpecifiedExtension = false;
-
-            // checks if url contains .js or .jsx
-            foreach (string jsExtension in this.JavascriptFileExtension)
+            string filename = null;
+            if (_enableDirectoryTransversalExecution == false)
             {
-                if (filename.EndsWith(jsExtension))
-                {
-                    requestSpecifiedExtension = true;
-                    break;
-                }
+                filename = Path.Combine(this.RootDirectory, this.JavascriptDefaultPage);                
             }
-
-            // url does not contain .js or .jsx, append it if file exists (first come basis).
-            if (requestSpecifiedExtension == false)
+            else
             {
+                // remove leading /
+                filename = request.Url.AbsolutePath.Substring(1);
+                bool requestSpecifiedExtension = false;
+
+                // checks if url contains .js or .jsx
                 foreach (string jsExtension in this.JavascriptFileExtension)
                 {
-                    if (File.Exists(filename + jsExtension))
+                    if (filename.EndsWith(jsExtension))
                     {
-                        filename = filename + jsExtension;
+                        requestSpecifiedExtension = true;
                         break;
                     }
                 }
-            }
 
-            // file not found, fallback to index.js
-            if (!File.Exists(filename))
-            {
-                Log(string.Format("[CHAKRA-REDIR] {0} -> {1}", filename, this.JavascriptDefaultPage));
-                filename = Path.Combine(this.RootDirectory, this.JavascriptDefaultPage);
+                // url does not contain .js or .jsx, append it if file exists (first come basis).
+                if (requestSpecifiedExtension == false)
+                {
+                    foreach (string jsExtension in this.JavascriptFileExtension)
+                    {
+                        if (File.Exists(Path.Combine(this.RootDirectory, filename + jsExtension)))
+                        {
+                            filename = Path.Combine(this.RootDirectory, filename + jsExtension);
+                            break;
+                        }
+                    }
+                }
+                else
+                {
+                    filename = Path.Combine(this.RootDirectory, filename);
+                }
+
+                // file not found, fallback to index.js
+                if (!File.Exists(filename))
+                {
+                    Log(string.Format("[CHAKRA-REDIR] {0} -> {1}", filename, this.JavascriptDefaultPage));
+                    filename = Path.Combine(this.RootDirectory, this.JavascriptDefaultPage);
+                }
             }
 
             // index.js not found
