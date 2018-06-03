@@ -30,7 +30,7 @@ docServerUrl = 'http://'${gitUser}'.github.io'
 # ------------------
 versioning {
     major = 1
-    minor = 2
+    minor = 3
     revision = 0
     
     # Default value is 'beta'. You should set it to '' when releasing a production build
