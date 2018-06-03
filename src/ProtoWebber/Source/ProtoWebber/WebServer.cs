@@ -9,6 +9,7 @@ namespace ProtoWebber
 		private string[] _prefix;
 		private WebListener _weblistener;
 		private IList<IWebServerMiddleware> _middleware;
+		private bool _isDisposed = false;
 
 		public WebServer(string[] prefix, IList<IWebServerMiddleware> middleware)
 		{
@@ -35,6 +36,9 @@ namespace ProtoWebber
 
 		public void Start()
 		{
+			if (_isDisposed == true)
+				throw new InvalidOperationException("Web server has already been disposed. Create a new instance to start again.");
+
 			_weblistener.ListenerException += ListenerException;
 			_weblistener.ListenerStart += ListenerStart;
 			_weblistener.WebRequest += WebRequest;
@@ -53,10 +57,14 @@ namespace ProtoWebber
             }
 
             WriteLog(string.Format("[VERBOSE] {0}", "Goodbye!"));
+            _isDisposed = true;
         }
 
         protected void WebRequest(object sender, WebRequestEventArgs e)
 		{
+			if (_isDisposed == true)
+				throw new InvalidOperationException("Web server has already been disposed. Create a new instance to start again.");
+
 			HttpListenerContext ctx = e.Context;
 			foreach (IWebServerMiddleware m in _middleware)
 			{
