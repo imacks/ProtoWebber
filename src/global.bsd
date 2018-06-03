@@ -30,7 +30,7 @@ docServerUrl = 'http://'${gitUser}'.github.io'
 # ------------------
 versioning {
     major = 1
-    minor = 3
+    minor = 4
     revision = 0
     
     # Default value is 'beta'. You should set it to '' when releasing a production build
@@ -40,7 +40,7 @@ versioning {
 
     # Build number to use when configuration is 'release'
     # Use 'auto' to autoincrement with every build
-    release-build = 236
+    release-build = 242
 
     # Build number to use when configuration is 'debug'
     # Use 'auto' to autoincrement with every build
