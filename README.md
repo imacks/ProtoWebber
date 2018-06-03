@@ -88,7 +88,7 @@ dotnetSdkDir = ${rootDir}'packages/dotnetsdk'
 Change `${rootDir}` to `${repoDir}`. This will cause all packages required to build this project to be stored under `(repoDir)/packages`.
 Note that I'm using .NETCore SDK, so it should cost a little more than 1GB for everything to be ready.
 
-Btw, I'm using (http://www.github.com/buildcenter/dotnetbuild)[DotNetBuild] to stage my build:
+Btw, I'm using [DotNetBuild](http://www.github.com/buildcenter/dotnetbuild) to stage my build:
 
 ```powershell
 # show help
