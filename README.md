@@ -26,8 +26,7 @@ TestWebber
 A quick and simple web server for testing and development use.
 Copyright (c) 2017 Macks L. All rights reserved.
 
-
-testwebber [-d path] [-h hostname] [-s server] [-a asset] [-m extension:mimetype] [-v]
+testwebber [-d path] [-h hostname] [-!ss | -s server] [-a asset] [-m extension:mimetype] [-v]
 testwebber --show-mimetypes
 testwebber -ver
 testwebber -h
@@ -36,6 +35,8 @@ testwebber -h
                   Default is <CurrentDir>\wwwroot
 -i|--hostname     Host name to listen. May be specified more than once.
                   Default is http://localhost:8080/
+-!ss|--disableserverscript
+                  Disables server side scripting.
 -s|--server       Name of server side scripting directory in wwwroot.
                   Default is 'server'.
 -a|--asset        Name of assets directory in wwwroot.
@@ -53,11 +54,16 @@ Common arguments:
 EXAMPLES
 ========
 # Run a web server on http://localhost:8080.
-# - If request starts with '/assets', webserver will try to find the file in (CurrentDir)/wwwroot/assets and serve as static file.
+# - If request starts with '/assets':
+#   - look for the file in (CurrentDir)/wwwroot/assets and serve as static file.
+#   - if not found, return 404
 # - Otherwise, webserver will look for files ending in .js or .jsx in (CurrentDir)/wwwroot/server, and execute it on on server side if found.
 # - No luck? webserver will try to execute (CurrentDir)/wwwroot/server/index.js or (CurrentDir)/wwwroot/server/index.jsx
 # - If all else fails, webserver will return a 404 error.
 testwebber
+
+# Disables server side scripting. Serves everything under (CurrentDir)/wwwroot/assets and (CurrentDir)/wwwroot/pages as static files.
+testwebber -a assets -a pages -!ss
 
 # Removes the file extension .tiff mimetype
 testwebber -m -.tiff
@@ -70,7 +76,19 @@ testwebber -m -.tiff -m .foo:text/csv
 
 Building
 --------
-I'm using `DotNetBuild` to stage the build:
+**Important!** You probably want to change the location where packages will be stored.
+
+Open up `(repoDir)/src/globa.bsd` with your favorite editor, and look for these lines:
+```bash
+pkgDir = ${rootDir}'packages/oneget'
+dotnetSdkDir = ${rootDir}'packages/dotnetsdk'
+#credDir = ${rootDir}'Credentials/imacks'
+```
+
+Change `${rootDir}` to `${repoDir}`. This will cause all packages required to build this project to be stored under `(repoDir)/packages`.
+Note that I'm using .NETCore SDK, so it should cost a little more than 1GB for everything to be ready.
+
+Btw, I'm using (http://www.github.com/buildcenter/dotnetbuild)[DotNetBuild] to stage my build:
 
 ```powershell
 # show help
@@ -85,6 +103,3 @@ build debug *
 # build a release version
 build release *
 ```
-
-
-*Last updated on 24/5/2017*

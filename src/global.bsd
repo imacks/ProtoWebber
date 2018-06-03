@@ -2,7 +2,7 @@ year = '2018'
 
 pkgDir = ${rootDir}'packages/oneget'
 dotnetSdkDir = ${rootDir}'packages/dotnetsdk'
-#credDir = ${rootDir}'Credentials/standardfx'
+#credDir = ${rootDir}'Credentials/imacks'
 
 # ------------------
 # Tooling
@@ -30,7 +30,7 @@ docServerUrl = 'http://'${gitUser}'.github.io'
 # ------------------
 versioning {
     major = 1
-    minor = 0
+    minor = 1
     revision = 0
     
     # Default value is 'beta'. You should set it to '' when releasing a production build
@@ -40,7 +40,7 @@ versioning {
 
     # Build number to use when configuration is 'release'
     # Use 'auto' to autoincrement with every build
-    release-build = 186
+    release-build = 220
 
     # Build number to use when configuration is 'debug'
     # Use 'auto' to autoincrement with every build
