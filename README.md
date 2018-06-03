@@ -26,7 +26,7 @@ TestWebber
 A quick and simple web server for testing and development use.
 Copyright (c) 2017 Macks L. All rights reserved.
 
-testwebber [-d path] [-h hostname] [-!ss | -s server] [-a asset] [-m extension:mimetype] [-v]
+testwebber [-d path] [-h hostname] [-!ss | -s server] [-t] [-k] [-a asset] [-m extension:mimetype] [-v]
 testwebber --show-mimetypes
 testwebber -ver
 testwebber -h
@@ -35,8 +35,13 @@ testwebber -h
                   Default is <CurrentDir>\wwwroot
 -i|--hostname     Host name to listen. May be specified more than once.
                   Default is http://localhost:8080/
+-k|--websocket    Enables websocket feature.
 -!ss|--disableserverscript
                   Disables server side scripting.
+-t|--transverseexecution
+                  Enables transverse execution of server side scripts.
+                  e.g. Run http://localhost:8080/foo[.js] if wwwroot\server\foo.js exists.
+                  Without this, all non-static requests are routed to server\index.js
 -s|--server       Name of server side scripting directory in wwwroot.
                   Default is 'server'.
 -a|--asset        Name of assets directory in wwwroot.
