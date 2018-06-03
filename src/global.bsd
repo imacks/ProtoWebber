@@ -40,7 +40,7 @@ versioning {
 
     # Build number to use when configuration is 'release'
     # Use 'auto' to autoincrement with every build
-    release-build = 230
+    release-build = 236
 
     # Build number to use when configuration is 'debug'
     # Use 'auto' to autoincrement with every build
