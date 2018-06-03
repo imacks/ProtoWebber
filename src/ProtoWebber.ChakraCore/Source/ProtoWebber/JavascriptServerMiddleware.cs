@@ -4,8 +4,9 @@ using System.Collections.Generic;
 using System.IO;
 using System.Net;
 using System.Text;
+using System.Net.WebSockets;
+using System.Threading;
 using Chakra.Hosting;
-using System.Collections.Specialized;
 
 namespace ProtoWebber
 {
@@ -17,6 +18,8 @@ namespace ProtoWebber
         private Predicate<HttpListenerContext> _acceptRequestFunc;
         private bool _isDisposing = false;
         private bool _enableDirectoryTransversalExecution = false;
+        private bool _enableWebsocket = false;
+        private int _websocketConnectionCount = 0;
 
         private JavaScriptRuntime _jsRuntime;
         private JavaScriptSourceContext currentSourceContext = JavaScriptSourceContext.FromIntPtr(IntPtr.Zero);
@@ -37,37 +40,48 @@ namespace ProtoWebber
         private string _serverSideJavascriptDefaultPage = "index.js";
 
         public JavascriptServerMiddleware(string rootDir)
-            : this(rootDir, null, false, false)
+            : this(rootDir, null, false, false, false)
         {
         }
 
         public JavascriptServerMiddleware(string rootDir, Func<HttpListenerContext, bool> acceptRequest)
-            : this(rootDir, new Predicate<HttpListenerContext>(acceptRequest), false, true)
+            : this(rootDir, new Predicate<HttpListenerContext>(acceptRequest), false, false, true)
         {
         }
 
         public JavascriptServerMiddleware(string rootDir, Predicate<HttpListenerContext> acceptRequest)
-            : this(rootDir, acceptRequest, false, false)
+            : this(rootDir, acceptRequest, false, false, false)
         {
         }
 
         public JavascriptServerMiddleware(string rootDir, Func<HttpListenerContext, bool> acceptRequest, bool transversalExecution)
-            : this(rootDir, new Predicate<HttpListenerContext>(acceptRequest), transversalExecution, true)
+            : this(rootDir, new Predicate<HttpListenerContext>(acceptRequest), transversalExecution, false, true)
         {
         }
 
         public JavascriptServerMiddleware(string rootDir, Predicate<HttpListenerContext> acceptRequest, bool transversalExecution)
-            : this(rootDir, acceptRequest, transversalExecution, false)
+            : this(rootDir, acceptRequest, transversalExecution, false, false)
         {
         }
 
-        private JavascriptServerMiddleware(string rootDir, Predicate<HttpListenerContext> acceptRequest, bool transversalExecution, bool predicateCompat)
+        public JavascriptServerMiddleware(string rootDir, Func<HttpListenerContext, bool> acceptRequest, bool transversalExecution, bool enableWebsocket)
+            : this(rootDir, new Predicate<HttpListenerContext>(acceptRequest), transversalExecution, enableWebsocket, true)
+        {
+        }
+
+        public JavascriptServerMiddleware(string rootDir, Predicate<HttpListenerContext> acceptRequest, bool transversalExecution, bool enableWebsocket)
+            : this(rootDir, acceptRequest, transversalExecution, enableWebsocket, false)
+        {
+        }
+
+        private JavascriptServerMiddleware(string rootDir, Predicate<HttpListenerContext> acceptRequest, bool transversalExecution, bool enableWebsocket, bool predicateCompat)
         {
             if (string.IsNullOrEmpty(rootDir))
                 throw new ArgumentNullException("rootDir");
 
             _rootDirectory = rootDir;
             _enableDirectoryTransversalExecution = transversalExecution;
+            _enableWebsocket = enableWebsocket;
 
             if (acceptRequest == null)
                 _acceptRequestFunc = (ctx => !ctx.Request.RawUrl.StartsWith("/assets"));
@@ -119,6 +133,12 @@ namespace ProtoWebber
             set { _enableDirectoryTransversalExecution = value; }
         }
 
+        public bool EnableWebsocket
+        {
+            get { return _enableWebsocket; }
+            set { _enableWebsocket = value; }
+        }
+
         public string JavascriptDefaultPage
         {
             get { return _serverSideJavascriptDefaultPage; }
@@ -135,11 +155,216 @@ namespace ProtoWebber
             return _acceptRequestFunc(context);
         }
 
+        public virtual async void ProcessWebSocketRequest(HttpListenerContext context)
+        {
+            WebSocketContext webSocketContext = null;
+            try
+            {
+                // When calling `AcceptWebSocketAsync` the negotiated subprotocol must be specified. For simplicity now we assumes that no subprotocol 
+                // was requested. 
+                webSocketContext = await context.AcceptWebSocketAsync(null);
+                if (_websocketConnectionCount == int.MaxValue)
+                {
+                    Log("[VERBOSE] Websocket reset connection count");
+                    _websocketConnectionCount = 0;
+                }
+                Interlocked.Increment(ref _websocketConnectionCount);
+                Log(string.Format("[VERBOSE] Websocket #{0}", _websocketConnectionCount));
+            }
+            catch (Exception ex)
+            {
+                // The upgrade process failed somehow. For simplicity lets assume it was a failure on the part of the server and indicate this using 500.
+                context.Response.StatusCode = 500;
+                context.Response.Close();
+                Log(string.Format("[ERROR] {0}", ex.Message));
+                return;
+            }
+
+            WebSocket webSocket = webSocketContext.WebSocket;
+            try
+            {
+                Log("[VERBOSE] Websocket is receiving");
+
+                //### Receiving
+                // Define a receive buffer to hold data received on the WebSocket connection. The buffer will be reused as we only need to hold on to the data
+                // long enough to send it back to the sender.
+                ArraySegment<byte> receiveBuffer = new ArraySegment<byte>(new byte[1024]);  // 8192;
+                MemoryStream msText = null;
+                MemoryStream msBin = null;
+
+                // While the WebSocket connection remains open run a simple loop that receives data and sends it back.
+                while (webSocket.State == WebSocketState.Open)
+                {
+                    // The first step is to begin a receive operation on the WebSocket. `ReceiveAsync` takes two parameters:
+                    //
+                    // * An `ArraySegment` to write the received data to. 
+                    // * A cancellation token. In this example we are not using any timeouts so we use `CancellationToken.None`.
+                    //
+                    // `ReceiveAsync` returns a `Task<WebSocketReceiveResult>`. The `WebSocketReceiveResult` provides information on the receive operation that was just 
+                    // completed, such as:                
+                    //
+                    // * `WebSocketReceiveResult.MessageType` - What type of data was received and written to the provided buffer. Was it binary, utf8, or a close message?                
+                    // * `WebSocketReceiveResult.Count` - How many bytes were read?                
+                    // * `WebSocketReceiveResult.EndOfMessage` - Have we finished reading the data for this message or is there more coming?
+                    WebSocketReceiveResult receiveResult = await webSocket.ReceiveAsync(receiveBuffer, CancellationToken.None);
+
+                    if (receiveResult.MessageType == WebSocketMessageType.Close)
+                    {
+                        // The WebSocket protocol defines a close handshake that allows a party to send a close frame when they wish to gracefully shut down the connection.
+                        // The party on the other end can complete the close handshake by sending back a close frame.
+                        //
+                        // If we received a close frame then lets participate in the handshake by sending a close frame back. This is achieved by calling `CloseAsync`. 
+                        // `CloseAsync` will also terminate the underlying TCP connection once the close handshake is complete.
+                        //
+                        // The WebSocket protocol defines different status codes that can be sent as part of a close frame and also allows a close message to be sent. 
+                        // If we are just responding to the client's request to close we can just use `WebSocketCloseStatus.NormalClosure` and omit the close message.
+
+                        Log("[VERBOSE] Websocket graceful close");
+                        await webSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, string.Empty, CancellationToken.None);
+                    }
+                    else if (receiveResult.MessageType == WebSocketMessageType.Text)
+                    {
+                        // We received text!
+
+                        if (msText == null)
+                        {
+                            Log("[VERBOSE] Websocket text frame");
+                            msText = new MemoryStream();
+                        }
+                        else
+                        {
+                            Log("[VERBOSE] Websocket text frame (append)");
+                        }
+
+                        msText.Write(receiveBuffer.Array, receiveBuffer.Offset, receiveResult.Count);
+
+                        if (receiveResult.EndOfMessage)
+                        {
+                            msText.Seek(0, SeekOrigin.Begin);
+                            using (var reader = new StreamReader(msText, Encoding.UTF8))
+                            {
+                                string receiveText = reader.ReadToEnd();
+                                string sendText = ProcessWebSocketTextRequest(receiveText);
+                                byte[] encoded = Encoding.UTF8.GetBytes(sendText);
+                                var sendBuffer = new ArraySegment<byte>(encoded, 0, encoded.Length);
+                                await webSocket.SendAsync(sendBuffer, WebSocketMessageType.Text, true, CancellationToken.None);
+                            }
+
+                            msText.Close();
+                            msText.Dispose();
+                            msText = null;
+                        }
+                    }
+                    else
+                    {
+                        // We received binary data!
+
+                        if (msBin == null)
+                        {
+                            Log("[VERBOSE] Websocket bin frame");
+                            msBin = new MemoryStream();
+                        }
+                        else
+                        {
+                            Log("[VERBOSE] Websocket bin frame (append)");
+                        }
+
+                        msBin.Write(receiveBuffer.Array, receiveBuffer.Offset, receiveResult.Count);
+
+                        if (receiveResult.EndOfMessage)
+                        {
+                            msBin.Seek(0, SeekOrigin.Begin);
+                            Stream sendStream = ProcessWebSocketBinaryRequest(msBin);
+                            sendStream.Seek(0, SeekOrigin.Begin);
+                            byte[] sendBytes = new byte[sendStream.Length];
+                            sendStream.Read(sendBytes, 0, (int)sendStream.Length);
+                            var sendBuffer = new ArraySegment<byte>(sendBytes, 0, sendBytes.Length);
+                            await webSocket.SendAsync(sendBuffer, WebSocketMessageType.Binary, true, CancellationToken.None);
+
+                            msBin.Close();
+                            msBin.Dispose();
+                            msBin = null;
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log(string.Format("[ERROR] {0}", ex.Message));
+            }
+            finally
+            {
+                // Clean up by disposing the WebSocket once it is closed/aborted.
+                if (webSocket != null)
+                {
+                    Log("[VERBOSE] Websocket is being disposed");
+                    webSocket.Dispose();
+                }
+            }
+        }
+
+        protected virtual string ProcessWebSocketTextRequest(string text)
+        {
+            string filename = null;
+            foreach (string extension in this.JavascriptFileExtension)
+            {
+                filename = Path.Combine(this.RootDirectory, "websocket.js");
+                if (File.Exists(filename))
+                    break;
+            }
+
+            if (!File.Exists(filename))
+                return "[ERROR 500] Unable to find websocket.js";
+
+            try
+            {
+                JavaScriptContext context = CreateHostWebsocketContext(_jsRuntime, text, null, false);
+
+                using (new JavaScriptContext.Scope(context))
+                {
+                    string script = File.ReadAllText(filename);
+                    JavaScriptValue result;
+                    try
+                    {
+                        result = JavaScriptContext.RunScript(script, currentSourceContext++, filename);
+                    }
+                    catch (JavaScriptScriptException e)
+                    {
+                        PrintScriptException(e.Error);
+                        return string.Format("[ERROR {0}]", HttpStatusCode.InternalServerError);
+                    }
+                    catch (Exception e)
+                    {
+                        Log(string.Format("[CHAKRA-500] failed to run script: {0}", e.Message));
+                        return string.Format("[ERROR {0}]", HttpStatusCode.InternalServerError);
+                    }
+
+                    return result.ToString();
+                }
+            }
+            catch (Exception e)
+            {
+                Log(string.Format("[CHAKRA-ERR] {0} {1}", filename, e.Message));
+            }
+
+            return string.Format("[ERROR {0}]", HttpStatusCode.InternalServerError);
+        }
+
+        protected virtual Stream ProcessWebSocketBinaryRequest(Stream input)
+        {
+            // not implemented yet #todo
+            return input;
+        }
+
         public virtual void ProcessRequest(HttpListenerContext context)
         {
-            // todo websocket
             if (context.Request.IsWebSocketRequest)
+            {
+                if (_enableWebsocket)
+                    ProcessWebSocketRequest(context);
+                    
                 return;
+            }
 
             try
             {
@@ -444,6 +669,50 @@ namespace ProtoWebber
 
             // Set the property
             globalObject.SetProperty(propertyId, function, true);
+        }
+
+        private JavaScriptContext CreateHostWebsocketContext(JavaScriptRuntime runtime, string text, Stream binaryStream, bool isStream)
+        {
+            // Create the context. Note that if we had wanted to start debugging from the very
+            // beginning, we would have called JsStartDebugging right after context is created.
+            JavaScriptContext context = runtime.CreateContext();
+
+            // Now set the execution context as being the current one on this thread.
+            using (new JavaScriptContext.Scope(context))
+            {
+                // Create the host object the script will use.
+                JavaScriptValue hostObject = JavaScriptValue.CreateObject();
+
+                // Get the global object
+                JavaScriptValue globalObject = JavaScriptValue.GlobalObject;
+
+                // Get the name of the property ("host") that we're going to set on the global object.
+                JavaScriptPropertyId hostPropertyId = JavaScriptPropertyId.FromString("host");
+
+                // Set the property.
+                globalObject.SetProperty(hostPropertyId, hostObject, true);
+
+                // Now create the host callbacks that we're going to expose to the script.
+                DefineHostCallback(hostObject, "echo", echoDelegate, IntPtr.Zero);
+                DefineHostCallback(hostObject, "runScript", runScriptDelegate, IntPtr.Zero);
+                DefineHostCallback(hostObject, "readFile", readFileDelegate, IntPtr.Zero);
+                DefineHostCallback(hostObject, "writeFile", writeFileDelegate, IntPtr.Zero);
+
+                JavaScriptValue requestParams = JavaScriptValue.CreateObject();
+                if (isStream)
+                {
+                    requestParams.SetProperty(JavaScriptPropertyId.FromString("blob"), JavaScriptValue.FromString(text), true);
+                    // not implemented yet #todo
+                }
+                else
+                {
+                    requestParams.SetProperty(JavaScriptPropertyId.FromString("text"), JavaScriptValue.FromString(text), true);
+                }
+
+                hostObject.SetProperty(JavaScriptPropertyId.FromString("request"), requestParams, true);
+            }
+
+            return context;
         }
 
         private JavaScriptContext CreateHostContext(JavaScriptRuntime runtime, HttpListenerRequest request)
