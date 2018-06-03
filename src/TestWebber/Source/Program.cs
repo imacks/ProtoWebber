@@ -1,6 +1,8 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Text.RegularExpressions;
+using System.Net;
 using ProtoWebber;
 
 namespace TestWebber
@@ -10,11 +12,12 @@ namespace TestWebber
 		private static string _rootDirectory;
 		private static string[] _prefixBinding;
 		//private static bool _enableWebSocket = false;
-		private static string _assetDir;
+		private static string[] _assetDir;
         private static string _serverScriptDir;
         internal static bool _verboseMode = false;
 		private static List<string> _mimeRemove = new List<string>();
 		private static Dictionary<string, string> _mimeAdd = new Dictionary<string, string>();
+		private static bool _disableServerScript = false;
 
 		static void Main(string[] args)
 		{
@@ -31,16 +34,52 @@ namespace TestWebber
                 if (_serverScriptDir == null)
                     _serverScriptDir = Path.Combine(_rootDirectory, "server");
 
-                if (_assetDir == null)
-					_assetDir = Path.Combine(_rootDirectory, "assets");
+                Predicate<HttpListenerContext> staticFileMiddlewareAcceptRequest = null;
+                Predicate<HttpListenerContext> javascriptServerMiddlewareAcceptRequest = null;
+
+                if ((_assetDir == null) || (_assetDir.Length == 0))
+                {
+					_assetDir = new string[] { Path.Combine(_rootDirectory, "assets") };
+                	staticFileMiddlewareAcceptRequest = (ctx => ctx.Request.RawUrl.StartsWith("/assets"));
+                	javascriptServerMiddlewareAcceptRequest = (ctx => !ctx.Request.RawUrl.StartsWith("/assets"));
+                	Console.WriteLine("[VERBOSE] Everything under 'assets' folder will be served as static files.");
+                }
+                else
+                {
+                	List<string> assetDirRegexItems = new List<string>();
+                	List<string> assetDirFullPathItems = new List<string>();
+                	foreach (string assetDirItem in _assetDir)
+                	{
+                		assetDirRegexItems.Add(Regex.Escape(assetDirItem));
+                		assetDirFullPathItems.Add(Path.Combine(_rootDirectory, assetDirItem));
+                	}
+                	string assetDirRegex = "^/(" + string.Join("|", assetDirRegexItems.ToArray()) + ").*$";
+                	Console.WriteLine(string.Format("[VERBOSE] Static asset pages will be matched with this regex: {0}", assetDirRegex));
+                	_assetDir = assetDirFullPathItems.ToArray();
+
+                	staticFileMiddlewareAcceptRequest = (ctx => Regex.IsMatch(ctx.Request.RawUrl, assetDirRegex));
+                	javascriptServerMiddlewareAcceptRequest = (ctx => !Regex.IsMatch(ctx.Request.RawUrl, assetDirRegex));
+                }
 
 				WebServer ws;
-				//if (!_enableWebSocket)
-				ws = new WebServer(_prefixBinding, new List<IWebServerMiddleware>()
+				if (_disableServerScript)
 				{
-					new StaticFileMiddleware(_assetDir, _mimeRemove.ToArray(), _mimeAdd),
-                    new JavascriptServerMiddleware(_serverScriptDir)
-				});
+					ws = new WebServer(_prefixBinding, new List<IWebServerMiddleware>()
+					{
+						new StaticFileMiddleware(_assetDir, staticFileMiddlewareAcceptRequest, _mimeRemove.ToArray(), _mimeAdd)
+					});
+				}
+				else
+				{
+					ws = new WebServer(_prefixBinding, new List<IWebServerMiddleware>()
+					{
+						new StaticFileMiddleware(_assetDir, staticFileMiddlewareAcceptRequest, _mimeRemove.ToArray(), _mimeAdd),
+	                    new JavascriptServerMiddleware(_serverScriptDir, javascriptServerMiddlewareAcceptRequest)
+					});
+				}
+
+
+				//if (!_enableWebSocket)
 				//else
 				//	ws = new WebSocketServer(_rootDirectory, _prefixBinding);
 
@@ -84,7 +123,7 @@ namespace TestWebber
 			Console.WriteLine();	
 			Console.WriteLine();	
 			//Console.WriteLine("testwebber [-d path] [-h hostname] [-a asset] [-s websocket] [-m extension:mimetype] [-v]");
-			Console.WriteLine("testwebber [-d path] [-h hostname] [-s server] [-a asset] [-m extension:mimetype] [-v]");
+			Console.WriteLine("testwebber [-d path] [-h hostname] [-!ss | -s server] [-a asset] [-m extension:mimetype] [-v]");
 			Console.WriteLine("testwebber --show-mimetypes");
 			Console.WriteLine("testwebber -ver");
 			Console.WriteLine("testwebber -h");
@@ -94,9 +133,11 @@ namespace TestWebber
 			Console.WriteLine(@"-i|--hostname     Host name to listen. May be specified more than once.");
 			Console.WriteLine(@"                  Default is http://localhost:8080/");
             //Console.WriteLine(@"-s|--websocket    Enables websocket feature.");
+            Console.WriteLine(@"-!ss|--disableserverscript");
+            Console.WriteLine(@"                  Disables server side scripting.");
             Console.WriteLine(@"-s|--server       Name of server side scripting directory in wwwroot.");
             Console.WriteLine(@"                  Default is 'server'.");
-            Console.WriteLine(@"-a|--asset        Name of assets directory in wwwroot.");
+            Console.WriteLine(@"-a|--asset        Name of assets directory in wwwroot. May be specified more than once.");
 			Console.WriteLine(@"                  Default is 'assets'.");
 			Console.WriteLine(@"-m|--mime         Additional mime types. To remove, -<extension>. May be specified more than once.");
 			Console.WriteLine(@"                  To get a list of stock mime type mappings, use testwebber '--show-mimetypes'");
@@ -111,11 +152,16 @@ namespace TestWebber
 			Console.WriteLine("EXAMPLES");
 			Console.WriteLine("========");
             Console.WriteLine("# Run a web server on http://localhost:8080.");
-            Console.WriteLine("# - If request starts with '/assets', webserver will try to find the file in (CurrentDir)/wwwroot/assets and serve as static file.");
+            Console.WriteLine("# - If request starts with '/assets':");
+            Console.WriteLine("#   - look for the file in (CurrentDir)/wwwroot/assets and serve as static file.");
+            Console.WriteLine("#   - if not found, return 404");
             Console.WriteLine("# - Otherwise, webserver will look for files ending in .js or .jsx in (CurrentDir)/wwwroot/server, and execute it on on server side if found.");
             Console.WriteLine("# - No luck? webserver will try to execute (CurrentDir)/wwwroot/server/index.js or (CurrentDir)/wwwroot/server/index.jsx");
-            Console.WriteLine("# - If all else fails, webserver will return a 500 error.");
+            Console.WriteLine("# - If all else fails, webserver will return a 404 error.");
             Console.WriteLine("testwebber");
+			Console.WriteLine();
+            Console.WriteLine("# Disables server side scripting. Serves everything under (CurrentDir)/wwwroot/assets and (CurrentDir)/wwwroot/pages as static files.");
+            Console.WriteLine("testwebber -a assets -a pages -!ss");
 			Console.WriteLine();
 			Console.WriteLine("# Removes the file extension .tiff mimetype");
 			Console.WriteLine("testwebber -m -.tiff");
@@ -130,8 +176,9 @@ namespace TestWebber
 		{
 			int lastArg = 0;
 			List<string> hostPrefix = new List<string>();
-			string assetPath = null;
+			List<string> assetPath = new List<string>();
             string serverScriptPath = null;
+            bool disableServerScript = false;
 
             for (; lastArg < args.Length; lastArg++)
 			{
@@ -154,6 +201,10 @@ namespace TestWebber
 					hostPrefix.Add(args[lastArg + 1].TrimEnd('/')  + "/");
 					lastArg += 1;
 				}
+                else if (IsArg(args[lastArg], "!ss", "disableserverscript"))
+                {
+                    disableServerScript = true;
+                }
                 else if (IsArg(args[lastArg], "s", "server"))
                 {
                     if (args.Length <= (lastArg + 1))
@@ -161,7 +212,7 @@ namespace TestWebber
                         Console.WriteLine("Argument -s/--server requires a value.");
                         return false;
                     }
-                    serverScriptPath = args[lastArg + 1].TrimEnd('/', '\\');
+                    serverScriptPath = args[lastArg + 1].Trim('/', '\\');
                     lastArg += 1;
                 }
                 else if (IsArg(args[lastArg], "a", "asset"))
@@ -171,7 +222,7 @@ namespace TestWebber
 						Console.WriteLine("Argument -a/--asset requires a value.");
 						return false;
 					}
-					assetPath = args[lastArg + 1].TrimEnd('/', '\\');
+					assetPath.Add(args[lastArg + 1].Trim('/', '\\'));
 					lastArg += 1;
 				}
 				//else if (IsArg(args[lastArg], "s", "websocket"))
@@ -229,12 +280,26 @@ namespace TestWebber
 				}
 			}
 
+			if (!disableServerScript)
+			{
+				foreach (string assetPathItem in assetPath)
+				{
+					if (assetPathItem == serverScriptPath)
+					{
+						Console.WriteLine("Asset folder name cannot be the same as the server script path name!");
+						return false;
+					}
+				}
+			}
+
 			if (hostPrefix.Count > 0)
 				_prefixBinding = hostPrefix.ToArray();
 			if (assetPath != null)
-				_assetDir = assetPath;
+				_assetDir = assetPath.ToArray();
             if (serverScriptPath != null)
                 _serverScriptDir = serverScriptPath;
+            if (disableServerScript == true)
+            	_disableServerScript = true;
 
 			return true;
 		}

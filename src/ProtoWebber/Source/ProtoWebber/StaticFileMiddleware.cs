@@ -8,7 +8,7 @@ namespace ProtoWebber
 {
     public class StaticFileMiddleware : IWebServerMiddleware
     {
-        private string _rootDirectory;
+        private string[] _rootDirectory;
         private bool _stopProcessing;
         private Action<string> _logger;
         private Predicate<HttpListenerContext> _acceptRequestFunc;
@@ -137,31 +137,83 @@ namespace ProtoWebber
         };
 
         public StaticFileMiddleware(string rootDir)
-            : this(rootDir, null, null, null)
+            : this(new string[] { rootDir }, null, null, null, true)
+        {
+        }
+
+        public StaticFileMiddleware(string[] rootDir)
+            : this(rootDir, null, null, null, true)
         {
         }
 
         public StaticFileMiddleware(string rootDir, Predicate<HttpListenerContext> acceptRequest)
-            : this(rootDir, acceptRequest, null, null)
+            : this(new string[] { rootDir }, acceptRequest, null, null, true)
+        {
+        }
+
+        public StaticFileMiddleware(string[] rootDir, Predicate<HttpListenerContext> acceptRequest)
+            : this(rootDir, acceptRequest, null, null, true)
+        {
+        }
+
+        public StaticFileMiddleware(string rootDir, Func<HttpListenerContext, bool> acceptRequest)
+            : this(new string[] { rootDir }, new Predicate<HttpListenerContext>(acceptRequest), null, null, false)
+        {
+        }
+
+        public StaticFileMiddleware(string[] rootDir, Func<HttpListenerContext, bool> acceptRequest)
+            : this(rootDir, new Predicate<HttpListenerContext>(acceptRequest), null, null, false)
         {
         }
 
         public StaticFileMiddleware(string rootDir, string[] mimeRemove, IDictionary<string, string> mimeAdd)
-            : this(rootDir, null, mimeRemove, mimeAdd)
+            : this(new string[] { rootDir }, null, mimeRemove, mimeAdd, true)
+        {
+        }
+
+        public StaticFileMiddleware(string[] rootDir, string[] mimeRemove, IDictionary<string, string> mimeAdd)
+            : this(rootDir, null, mimeRemove, mimeAdd, true)
+        {
+        }
+
+        public StaticFileMiddleware(string rootDir, Func<HttpListenerContext, bool> acceptRequest, string[] mimeRemove, IDictionary<string, string> mimeAdd)
+            : this(new string[] { rootDir }, new Predicate<HttpListenerContext>(acceptRequest), mimeRemove, mimeAdd, false)
+        {
+        }
+
+        public StaticFileMiddleware(string[] rootDir, Func<HttpListenerContext, bool> acceptRequest, string[] mimeRemove, IDictionary<string, string> mimeAdd)
+            : this(rootDir, new Predicate<HttpListenerContext>(acceptRequest), mimeRemove, mimeAdd, false)
         {
         }
 
         public StaticFileMiddleware(string rootDir, Predicate<HttpListenerContext> acceptRequest, string[] mimeRemove, IDictionary<string, string> mimeAdd)
+            : this(new string[] { rootDir }, acceptRequest, mimeRemove, mimeAdd, true)
         {
-            if (string.IsNullOrEmpty(rootDir))
-                throw new ArgumentNullException("rootDir");
+        }
+
+        public StaticFileMiddleware(string[] rootDir, Predicate<HttpListenerContext> acceptRequest, string[] mimeRemove, IDictionary<string, string> mimeAdd)
+            : this(rootDir, acceptRequest, mimeRemove, mimeAdd, true)
+        {
+        }
+
+        private StaticFileMiddleware(string[] rootDir, Predicate<HttpListenerContext> acceptRequest, string[] mimeRemove, IDictionary<string, string> mimeAdd, bool predicateCompat)
+        {
+            foreach (string rootDirItem in rootDir)
+            {
+                if (string.IsNullOrEmpty(rootDirItem))
+                    throw new ArgumentException("rootDir");
+            }
 
             _rootDirectory = rootDir;
 
             if (acceptRequest == null)
+            {
                 _acceptRequestFunc = (ctx => ctx.Request.RawUrl.StartsWith("/assets"));
+            }
             else
+            {
                 _acceptRequestFunc = acceptRequest;
+            }
 
             if (mimeRemove != null)
             {
@@ -206,7 +258,7 @@ namespace ProtoWebber
             set { _logger = value; }
         }
 
-        public string RootDirectory
+        public string[] RootDirectory
         {
             get { return _rootDirectory; }
             set { _rootDirectory = value; }
@@ -275,27 +327,41 @@ namespace ProtoWebber
 
         protected virtual WebResponseData ProcessFileRequest(HttpListenerRequest request)
         {
+            // strip first char which should be a /
             string filename = request.Url.AbsolutePath.Substring(1);
-            // prevents wwwroot\assets\assets/foo.txt
-            // #todo this is a vulnerability
-            filename = Path.Combine(Path.GetDirectoryName(_rootDirectory), filename);
+            bool fileFound = false;
+            string candidateFilename = null;
 
-            if (!File.Exists(filename))
+            for (int i = 0; i < _rootDirectory.Length; i++)
             {
-                if (Directory.Exists(filename))
+                // prevents wwwroot\assets\assets/foo.txt
+                // #todo this is a vulnerability
+                candidateFilename = Path.Combine(Path.GetDirectoryName(_rootDirectory[i]), filename);
+
+                if (File.Exists(candidateFilename))
                 {
-                    foreach (string indexFile in _indexFiles)
+                    filename = candidateFilename;
+                    fileFound = true;
+                    break;
+                }
+                else
+                {
+                    if (Directory.Exists(candidateFilename))
                     {
-                        if (File.Exists(Path.Combine(filename, indexFile)))
+                        foreach (string indexFile in _indexFiles)
                         {
-                            filename = Path.Combine(filename, indexFile);
-                            break;
+                            if (File.Exists(Path.Combine(candidateFilename, indexFile)))
+                            {
+                                filename = Path.Combine(candidateFilename, indexFile);
+                                fileFound = true;
+                                break;
+                            }
                         }
                     }
                 }
             }
 
-            if (!File.Exists(filename))
+            if (fileFound == false)
             {
                 Log(string.Format("[STATIC-404] {0}", filename));
 

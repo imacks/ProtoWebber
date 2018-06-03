@@ -36,11 +36,21 @@ namespace ProtoWebber
         private string _serverSideJavascriptDefaultPage = "index.js";
 
         public JavascriptServerMiddleware(string rootDir)
-            : this(rootDir, null)
+            : this(rootDir, null, false)
+        {
+        }
+
+        public JavascriptServerMiddleware(string rootDir, Func<HttpListenerContext, bool> acceptRequest)
+            : this(rootDir, new Predicate<HttpListenerContext>(acceptRequest), true)
         {
         }
 
         public JavascriptServerMiddleware(string rootDir, Predicate<HttpListenerContext> acceptRequest)
+            : this(rootDir, acceptRequest, false)
+        {
+        }
+
+        private JavascriptServerMiddleware(string rootDir, Predicate<HttpListenerContext> acceptRequest, bool predicateCompat)
         {
             if (string.IsNullOrEmpty(rootDir))
                 throw new ArgumentNullException("rootDir");
