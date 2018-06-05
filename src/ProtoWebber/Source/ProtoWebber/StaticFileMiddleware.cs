@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Net;
+using System.Text.RegularExpressions;
 
 namespace ProtoWebber
 {
@@ -208,7 +209,16 @@ namespace ProtoWebber
 
             if (acceptRequest == null)
             {
-                _acceptRequestFunc = (ctx => ctx.Request.RawUrl.StartsWith("/assets"));
+                List<string> assetDirRegexItems = new List<string>();
+                foreach (string assetDirItem in rootDir)
+                {
+                    string childDirName = Path.GetFileName(assetDirItem);
+                    assetDirRegexItems.Add(Regex.Escape(childDirName));
+                }
+
+                string assetDirRegex = "^/(" + string.Join("|", assetDirRegexItems.ToArray()) + ").*$";
+
+                _acceptRequestFunc = (ctx => Regex.IsMatch(ctx.Request.RawUrl, assetDirRegex));
             }
             else
             {
