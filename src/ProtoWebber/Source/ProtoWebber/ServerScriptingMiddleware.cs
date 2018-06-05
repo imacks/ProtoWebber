@@ -240,7 +240,7 @@ namespace ProtoWebber
 
             try
             {
-                Log(string.Format("[CHAKRA-REQ] {0}", context.Request.RawUrl));
+                Log(string.Format("[DYNAMIC-REQ] {0}", context.Request.RawUrl));
 
                 // process the request
                 WebResponseData rdata = _processRequest(context.Request);
