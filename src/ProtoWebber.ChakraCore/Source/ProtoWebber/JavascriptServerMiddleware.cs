@@ -7,6 +7,7 @@ using System.Text;
 using System.Net.WebSockets;
 using System.Threading;
 using Chakra.Hosting;
+using System.Threading.Tasks;
 
 namespace ProtoWebber
 {
@@ -18,8 +19,9 @@ namespace ProtoWebber
         private Predicate<HttpListenerContext> _acceptRequestFunc;
         private bool _isDisposing = false;
         private bool _enableDirectoryTransversalExecution = false;
-        private bool _enableWebsocket = false;
+        private bool _enableWebSocket = false;
         private int _websocketConnectionCount = 0;
+        private WebSocketConnectionManager _webSocketClients = new WebSocketConnectionManager();
 
         private JavaScriptRuntime _jsRuntime;
         private JavaScriptSourceContext currentSourceContext = JavaScriptSourceContext.FromIntPtr(IntPtr.Zero);
@@ -30,6 +32,8 @@ namespace ProtoWebber
         private readonly JavaScriptNativeFunction runScriptDelegate;
         private readonly JavaScriptNativeFunction readFileDelegate;
         private readonly JavaScriptNativeFunction writeFileDelegate;
+        private readonly JavaScriptNativeFunction getWebSocketClientIdDelegate;
+        private readonly JavaScriptNativeFunction pushWebSocketMessageDelegate;
 
         private IList<string> _serverSideJavascriptExtension = new List<string>()
         {
@@ -74,14 +78,14 @@ namespace ProtoWebber
         {
         }
 
-        private JavascriptServerMiddleware(string rootDir, Predicate<HttpListenerContext> acceptRequest, bool transversalExecution, bool enableWebsocket, bool predicateCompat)
+        private JavascriptServerMiddleware(string rootDir, Predicate<HttpListenerContext> acceptRequest, bool transversalExecution, bool enableWebSocket, bool predicateCompat)
         {
             if (string.IsNullOrEmpty(rootDir))
                 throw new ArgumentNullException("rootDir");
 
             _rootDirectory = rootDir;
             _enableDirectoryTransversalExecution = transversalExecution;
-            _enableWebsocket = enableWebsocket;
+            _enableWebSocket = enableWebSocket;
 
             if (acceptRequest == null)
                 _acceptRequestFunc = (ctx => !ctx.Request.RawUrl.StartsWith("/assets"));
@@ -92,6 +96,8 @@ namespace ProtoWebber
             runScriptDelegate = JSRunScript;
             writeFileDelegate = JSWriteFile;
             readFileDelegate = JSReadFile;
+            getWebSocketClientIdDelegate = JSGetPushClients;
+            pushWebSocketMessageDelegate = JSPushMessage;
 
             // initialize javascript runtime
             // Create the runtime. We're only going to use one runtime for this host.
@@ -133,10 +139,15 @@ namespace ProtoWebber
             set { _enableDirectoryTransversalExecution = value; }
         }
 
-        public bool EnableWebsocket
+        public bool EnableWebSocket
         {
-            get { return _enableWebsocket; }
-            set { _enableWebsocket = value; }
+            get { return _enableWebSocket; }
+            set { _enableWebSocket = value; }
+        }
+
+        public WebSocketConnectionManager WebSocketClients
+        {
+            get { return _webSocketClients; }
         }
 
         public string JavascriptDefaultPage
@@ -155,212 +166,11 @@ namespace ProtoWebber
             return _acceptRequestFunc(context);
         }
 
-        public virtual async void ProcessWebSocketRequest(HttpListenerContext context)
-        {
-            WebSocketContext webSocketContext = null;
-            try
-            {
-                // When calling `AcceptWebSocketAsync` the negotiated subprotocol must be specified. For simplicity now we assumes that no subprotocol 
-                // was requested. 
-                webSocketContext = await context.AcceptWebSocketAsync(null);
-                if (_websocketConnectionCount == int.MaxValue)
-                {
-                    Log("[VERBOSE] Websocket reset connection count");
-                    _websocketConnectionCount = 0;
-                }
-                Interlocked.Increment(ref _websocketConnectionCount);
-                Log(string.Format("[VERBOSE] Websocket #{0}", _websocketConnectionCount));
-            }
-            catch (Exception ex)
-            {
-                // The upgrade process failed somehow. For simplicity lets assume it was a failure on the part of the server and indicate this using 500.
-                context.Response.StatusCode = 500;
-                context.Response.Close();
-                Log(string.Format("[ERROR] {0}", ex.Message));
-                return;
-            }
-
-            WebSocket webSocket = webSocketContext.WebSocket;
-            try
-            {
-                Log("[VERBOSE] Websocket is receiving");
-
-                //### Receiving
-                // Define a receive buffer to hold data received on the WebSocket connection. The buffer will be reused as we only need to hold on to the data
-                // long enough to send it back to the sender.
-                ArraySegment<byte> receiveBuffer = new ArraySegment<byte>(new byte[1024]);  // 8192;
-                MemoryStream msText = null;
-                MemoryStream msBin = null;
-
-                // While the WebSocket connection remains open run a simple loop that receives data and sends it back.
-                while (webSocket.State == WebSocketState.Open)
-                {
-                    // The first step is to begin a receive operation on the WebSocket. `ReceiveAsync` takes two parameters:
-                    //
-                    // * An `ArraySegment` to write the received data to. 
-                    // * A cancellation token. In this example we are not using any timeouts so we use `CancellationToken.None`.
-                    //
-                    // `ReceiveAsync` returns a `Task<WebSocketReceiveResult>`. The `WebSocketReceiveResult` provides information on the receive operation that was just 
-                    // completed, such as:                
-                    //
-                    // * `WebSocketReceiveResult.MessageType` - What type of data was received and written to the provided buffer. Was it binary, utf8, or a close message?                
-                    // * `WebSocketReceiveResult.Count` - How many bytes were read?                
-                    // * `WebSocketReceiveResult.EndOfMessage` - Have we finished reading the data for this message or is there more coming?
-                    WebSocketReceiveResult receiveResult = await webSocket.ReceiveAsync(receiveBuffer, CancellationToken.None);
-
-                    if (receiveResult.MessageType == WebSocketMessageType.Close)
-                    {
-                        // The WebSocket protocol defines a close handshake that allows a party to send a close frame when they wish to gracefully shut down the connection.
-                        // The party on the other end can complete the close handshake by sending back a close frame.
-                        //
-                        // If we received a close frame then lets participate in the handshake by sending a close frame back. This is achieved by calling `CloseAsync`. 
-                        // `CloseAsync` will also terminate the underlying TCP connection once the close handshake is complete.
-                        //
-                        // The WebSocket protocol defines different status codes that can be sent as part of a close frame and also allows a close message to be sent. 
-                        // If we are just responding to the client's request to close we can just use `WebSocketCloseStatus.NormalClosure` and omit the close message.
-
-                        Log("[VERBOSE] Websocket graceful close");
-                        await webSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, string.Empty, CancellationToken.None);
-                    }
-                    else if (receiveResult.MessageType == WebSocketMessageType.Text)
-                    {
-                        // We received text!
-
-                        if (msText == null)
-                        {
-                            Log("[VERBOSE] Websocket text frame");
-                            msText = new MemoryStream();
-                        }
-                        else
-                        {
-                            Log("[VERBOSE] Websocket text frame (append)");
-                        }
-
-                        msText.Write(receiveBuffer.Array, receiveBuffer.Offset, receiveResult.Count);
-
-                        if (receiveResult.EndOfMessage)
-                        {
-                            msText.Seek(0, SeekOrigin.Begin);
-                            using (var reader = new StreamReader(msText, Encoding.UTF8))
-                            {
-                                string receiveText = reader.ReadToEnd();
-                                string sendText = ProcessWebSocketTextRequest(receiveText);
-                                byte[] encoded = Encoding.UTF8.GetBytes(sendText);
-                                var sendBuffer = new ArraySegment<byte>(encoded, 0, encoded.Length);
-                                await webSocket.SendAsync(sendBuffer, WebSocketMessageType.Text, true, CancellationToken.None);
-                            }
-
-                            msText.Close();
-                            msText.Dispose();
-                            msText = null;
-                        }
-                    }
-                    else
-                    {
-                        // We received binary data!
-
-                        if (msBin == null)
-                        {
-                            Log("[VERBOSE] Websocket bin frame");
-                            msBin = new MemoryStream();
-                        }
-                        else
-                        {
-                            Log("[VERBOSE] Websocket bin frame (append)");
-                        }
-
-                        msBin.Write(receiveBuffer.Array, receiveBuffer.Offset, receiveResult.Count);
-
-                        if (receiveResult.EndOfMessage)
-                        {
-                            msBin.Seek(0, SeekOrigin.Begin);
-                            Stream sendStream = ProcessWebSocketBinaryRequest(msBin);
-                            sendStream.Seek(0, SeekOrigin.Begin);
-                            byte[] sendBytes = new byte[sendStream.Length];
-                            sendStream.Read(sendBytes, 0, (int)sendStream.Length);
-                            var sendBuffer = new ArraySegment<byte>(sendBytes, 0, sendBytes.Length);
-                            await webSocket.SendAsync(sendBuffer, WebSocketMessageType.Binary, true, CancellationToken.None);
-
-                            msBin.Close();
-                            msBin.Dispose();
-                            msBin = null;
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                Log(string.Format("[ERROR] {0}", ex.Message));
-            }
-            finally
-            {
-                // Clean up by disposing the WebSocket once it is closed/aborted.
-                if (webSocket != null)
-                {
-                    Log("[VERBOSE] Websocket is being disposed");
-                    webSocket.Dispose();
-                }
-            }
-        }
-
-        protected virtual string ProcessWebSocketTextRequest(string text)
-        {
-            string filename = null;
-            foreach (string extension in this.JavascriptFileExtension)
-            {
-                filename = Path.Combine(this.RootDirectory, "websocket.js");
-                if (File.Exists(filename))
-                    break;
-            }
-
-            if (!File.Exists(filename))
-                return "[ERROR 500] Unable to find websocket.js";
-
-            try
-            {
-                JavaScriptContext context = CreateHostWebsocketContext(_jsRuntime, text, null, false);
-
-                using (new JavaScriptContext.Scope(context))
-                {
-                    string script = File.ReadAllText(filename);
-                    JavaScriptValue result;
-                    try
-                    {
-                        result = JavaScriptContext.RunScript(script, currentSourceContext++, filename);
-                    }
-                    catch (JavaScriptScriptException e)
-                    {
-                        PrintScriptException(e.Error);
-                        return string.Format("[ERROR {0}]", HttpStatusCode.InternalServerError);
-                    }
-                    catch (Exception e)
-                    {
-                        Log(string.Format("[CHAKRA-500] failed to run script: {0}", e.Message));
-                        return string.Format("[ERROR {0}]", HttpStatusCode.InternalServerError);
-                    }
-
-                    return result.ToString();
-                }
-            }
-            catch (Exception e)
-            {
-                Log(string.Format("[CHAKRA-ERR] {0} {1}", filename, e.Message));
-            }
-
-            return string.Format("[ERROR {0}]", HttpStatusCode.InternalServerError);
-        }
-
-        protected virtual Stream ProcessWebSocketBinaryRequest(Stream input)
-        {
-            // not implemented yet #todo
-            return input;
-        }
-
         public virtual void ProcessRequest(HttpListenerContext context)
         {
             if (context.Request.IsWebSocketRequest)
             {
-                if (_enableWebsocket)
+                if (this.EnableWebSocket)
                     ProcessWebSocketRequest(context);
                     
                 return;
@@ -562,7 +372,249 @@ namespace ProtoWebber
             };
         }
 
+
+
+
+        public virtual async void ProcessWebSocketRequest(HttpListenerContext context)
+        {
+            WebSocketContext webSocketContext = null;
+            try
+            {
+                // When calling `AcceptWebSocketAsync` the negotiated subprotocol must be specified. For simplicity now we assumes that no subprotocol 
+                // was requested. 
+                webSocketContext = await context.AcceptWebSocketAsync(null);
+                if (_websocketConnectionCount == int.MaxValue)
+                {
+                    Log("[VERBOSE] Websocket reset connection count");
+                    _websocketConnectionCount = 0;
+                }
+                Interlocked.Increment(ref _websocketConnectionCount);
+                Log(string.Format("[VERBOSE] Websocket #{0}", _websocketConnectionCount));
+            }
+            catch (Exception ex)
+            {
+                // The upgrade process failed somehow. For simplicity lets assume it was a failure on the part of the server and indicate this using 500.
+                context.Response.StatusCode = 500;
+                context.Response.Close();
+                Log(string.Format("[ERROR] {0}", ex.Message));
+                return;
+            }
+
+            WebSocket webSocket = webSocketContext.WebSocket;
+            string webSocketId = WebSocketClients.AddSocket(webSocket);
+
+            try
+            {
+                Log("[VERBOSE] Websocket is receiving");
+
+                //### Receiving
+                // Define a receive buffer to hold data received on the WebSocket connection. The buffer will be reused as we only need to hold on to the data
+                // long enough to send it back to the sender.
+                ArraySegment<byte> receiveBuffer = new ArraySegment<byte>(new byte[1024]);  // 8192;
+                MemoryStream msText = null;
+                MemoryStream msBin = null;
+
+                // While the WebSocket connection remains open run a simple loop that receives data and sends it back.
+                while (webSocket.State == WebSocketState.Open)
+                {
+                    // The first step is to begin a receive operation on the WebSocket. `ReceiveAsync` takes two parameters:
+                    //
+                    // * An `ArraySegment` to write the received data to. 
+                    // * A cancellation token. In this example we are not using any timeouts so we use `CancellationToken.None`.
+                    //
+                    // `ReceiveAsync` returns a `Task<WebSocketReceiveResult>`. The `WebSocketReceiveResult` provides information on the receive operation that was just 
+                    // completed, such as:                
+                    //
+                    // * `WebSocketReceiveResult.MessageType` - What type of data was received and written to the provided buffer. Was it binary, utf8, or a close message?                
+                    // * `WebSocketReceiveResult.Count` - How many bytes were read?                
+                    // * `WebSocketReceiveResult.EndOfMessage` - Have we finished reading the data for this message or is there more coming?
+                    WebSocketReceiveResult receiveResult = await webSocket.ReceiveAsync(receiveBuffer, CancellationToken.None);
+
+                    if (receiveResult.MessageType == WebSocketMessageType.Close)
+                    {
+                        // The WebSocket protocol defines a close handshake that allows a party to send a close frame when they wish to gracefully shut down the connection.
+                        // The party on the other end can complete the close handshake by sending back a close frame.
+                        //
+                        // If we received a close frame then lets participate in the handshake by sending a close frame back. This is achieved by calling `CloseAsync`. 
+                        // `CloseAsync` will also terminate the underlying TCP connection once the close handshake is complete.
+                        //
+                        // The WebSocket protocol defines different status codes that can be sent as part of a close frame and also allows a close message to be sent. 
+                        // If we are just responding to the client's request to close we can just use `WebSocketCloseStatus.NormalClosure` and omit the close message.
+
+                        Log("[VERBOSE] Websocket graceful close");
+                        await WebSocketClients.RemoveSocket(WebSocketClients.GetId(webSocket));
+                        //await webSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, string.Empty, CancellationToken.None);
+                    }
+                    else if (receiveResult.MessageType == WebSocketMessageType.Text)
+                    {
+                        // We received text!
+
+                        if (msText == null)
+                        {
+                            Log("[VERBOSE] Websocket text frame");
+                            msText = new MemoryStream();
+                        }
+                        else
+                        {
+                            Log("[VERBOSE] Websocket text frame (append)");
+                        }
+
+                        msText.Write(receiveBuffer.Array, receiveBuffer.Offset, receiveResult.Count);
+
+                        if (receiveResult.EndOfMessage)
+                        {
+                            msText.Seek(0, SeekOrigin.Begin);
+                            using (var reader = new StreamReader(msText, Encoding.UTF8))
+                            {
+                                string receiveText = reader.ReadToEnd();
+                                string sendText = ProcessWebSocketTextRequest(receiveText);
+                                byte[] encoded = Encoding.UTF8.GetBytes(sendText);
+                                var sendBuffer = new ArraySegment<byte>(encoded, 0, encoded.Length);
+                                await webSocket.SendAsync(sendBuffer, WebSocketMessageType.Text, true, CancellationToken.None);
+                            }
+
+                            msText.Close();
+                            msText.Dispose();
+                            msText = null;
+                        }
+                    }
+                    else
+                    {
+                        // We received binary data!
+
+                        if (msBin == null)
+                        {
+                            Log("[VERBOSE] Websocket bin frame");
+                            msBin = new MemoryStream();
+                        }
+                        else
+                        {
+                            Log("[VERBOSE] Websocket bin frame (append)");
+                        }
+
+                        msBin.Write(receiveBuffer.Array, receiveBuffer.Offset, receiveResult.Count);
+
+                        if (receiveResult.EndOfMessage)
+                        {
+                            msBin.Seek(0, SeekOrigin.Begin);
+                            Stream sendStream = ProcessWebSocketBinaryRequest(msBin);
+                            sendStream.Seek(0, SeekOrigin.Begin);
+                            byte[] sendBytes = new byte[sendStream.Length];
+                            sendStream.Read(sendBytes, 0, (int)sendStream.Length);
+                            var sendBuffer = new ArraySegment<byte>(sendBytes, 0, sendBytes.Length);
+                            await webSocket.SendAsync(sendBuffer, WebSocketMessageType.Binary, true, CancellationToken.None);
+
+                            msBin.Close();
+                            msBin.Dispose();
+                            msBin = null;
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log(string.Format("[ERROR] {0}", ex.Message));
+            }
+            finally
+            {
+                // Clean up by disposing the WebSocket once it is closed/aborted.
+                if (webSocket != null)
+                {
+                    Log("[VERBOSE] Websocket is being disposed");
+                    webSocket.Dispose();
+                }
+            }
+        }
+
+        protected virtual string ProcessWebSocketTextRequest(string text)
+        {
+            string filename = null;
+            foreach (string extension in this.JavascriptFileExtension)
+            {
+                filename = Path.Combine(this.RootDirectory, "websocket.js");
+                if (File.Exists(filename))
+                    break;
+            }
+
+            if (!File.Exists(filename))
+                return "[ERROR 500] Unable to find websocket.js";
+
+            try
+            {
+                JavaScriptContext context = CreateHostWebsocketContext(_jsRuntime, text, null, false);
+
+                using (new JavaScriptContext.Scope(context))
+                {
+                    string script = File.ReadAllText(filename);
+                    JavaScriptValue result;
+                    try
+                    {
+                        result = JavaScriptContext.RunScript(script, currentSourceContext++, filename);
+                    }
+                    catch (JavaScriptScriptException e)
+                    {
+                        PrintScriptException(e.Error);
+                        return string.Format("[ERROR {0}]", HttpStatusCode.InternalServerError);
+                    }
+                    catch (Exception e)
+                    {
+                        Log(string.Format("[CHAKRA-500] failed to run script: {0}", e.Message));
+                        return string.Format("[ERROR {0}]", HttpStatusCode.InternalServerError);
+                    }
+
+                    return result.ToString();
+                }
+            }
+            catch (Exception e)
+            {
+                Log(string.Format("[CHAKRA-ERR] {0} {1}", filename, e.Message));
+            }
+
+            return string.Format("[ERROR {0}]", HttpStatusCode.InternalServerError);
+        }
+
+        protected virtual Stream ProcessWebSocketBinaryRequest(Stream input)
+        {
+            // not implemented yet #todo
+            return input;
+        }
+
+
+
+
+
         // --- [Javascripting ] ---
+
+        private JavaScriptValue JSPushMessage(JavaScriptValue callee, bool isConstructCall, JavaScriptValue[] arguments, ushort argumentCount, IntPtr callbackData)
+        {
+            if (arguments.Length < 3)
+            {
+                JSThrowException("not enough arguments");
+                return JavaScriptValue.Invalid;
+            }
+
+            string socketId = arguments[1].ToString();
+            string message = arguments[2].ToString();
+
+            // #todo push across 2 sessions cause server to crash
+            var task = Task.Run(async () => await this.WebSocketClients.SendMessageAsync(socketId, message));
+            task.Wait();
+
+            return JavaScriptValue.Invalid;
+        }
+
+        private JavaScriptValue JSGetPushClients(JavaScriptValue callee, bool isConstructCall, JavaScriptValue[] arguments, ushort argumentCount, IntPtr callbackData)
+        {
+            List<string> clientIds = new List<string>(this.WebSocketClients.GetAll().Keys);
+            JavaScriptValue outValue = JavaScriptValue.CreateArray((uint)clientIds.Count);
+
+            for (int i = 0; i < clientIds.Count; i++)
+            {
+                outValue.SetIndexedProperty(JavaScriptValue.FromInt32(i), JavaScriptValue.FromString(clientIds[i]));
+            }
+
+            return outValue;
+        }
 
         private void JSThrowException(string errorString)
         {
@@ -697,6 +749,8 @@ namespace ProtoWebber
                 DefineHostCallback(hostObject, "runScript", runScriptDelegate, IntPtr.Zero);
                 DefineHostCallback(hostObject, "readFile", readFileDelegate, IntPtr.Zero);
                 DefineHostCallback(hostObject, "writeFile", writeFileDelegate, IntPtr.Zero);
+                DefineHostCallback(hostObject, "websocketClients", getWebSocketClientIdDelegate, IntPtr.Zero);
+                DefineHostCallback(hostObject, "websocketPush", pushWebSocketMessageDelegate, IntPtr.Zero);
 
                 JavaScriptValue requestParams = JavaScriptValue.CreateObject();
                 if (isStream)
