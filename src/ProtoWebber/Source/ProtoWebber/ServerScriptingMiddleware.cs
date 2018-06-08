@@ -17,6 +17,7 @@ namespace ProtoWebber
         private bool _isDisposing = false;
         private bool _enableWebsocket = false;
         private int _websocketConnectionCount = 0;
+        private WebSocketConnectionManager _webSocketClients = new WebSocketConnectionManager();
 
         private Func<HttpListenerRequest, WebResponseData> _processRequest;
         private Func<string, string> _processWebsocketTextRequest;
@@ -75,9 +76,73 @@ namespace ProtoWebber
             set { _enableWebsocket = value; }
         }
 
+        public WebSocketConnectionManager WebSocketClients
+        {
+            get { return _webSocketClients; }
+        }
+
         public virtual bool AcceptRequest(HttpListenerContext context)
         {
             return _acceptRequestFunc(context);
+        }
+
+        public virtual void ProcessRequest(HttpListenerContext context)
+        {
+            if (context.Request.IsWebSocketRequest)
+            {
+                if (_enableWebsocket)
+                    ProcessWebSocketRequest(context);
+                    
+                return;
+            }
+
+            try
+            {
+                Log(string.Format("[DYNAMIC-REQ] {0}", context.Request.RawUrl));
+
+                // process the request
+                WebResponseData rdata = _processRequest(context.Request);
+
+                // convert response to stream
+                Stream responseData = rdata.Stream;
+
+                if (rdata.MimeType != null)
+                    context.Response.ContentType = rdata.MimeType;
+
+                if (rdata.Headers != null)
+                {
+                    foreach (string header in rdata.Headers.Keys)
+                    {
+                        context.Response.AddHeader(header, (string)rdata.Headers[header]);
+                    }
+                }
+
+                if (responseData != null)
+                {
+                    context.Response.ContentLength64 = responseData.Length;
+                    byte[] buffer = new byte[1024 * 16];
+                    int nbytes;
+                    while ((nbytes = responseData.Read(buffer, 0, buffer.Length)) > 0)
+                    {
+                        context.Response.OutputStream.Write(buffer, 0, nbytes);
+                    }
+                    responseData.Close();
+                }
+
+                context.Response.StatusCode = rdata.StatusCode;
+
+                context.Response.OutputStream.Flush();
+            }
+            catch (Exception ex)
+            {
+                context.Response.StatusCode = (int)HttpStatusCode.InternalServerError;
+                Log(string.Format("[ERROR] {0}", ex));
+            }
+            finally
+            {
+                // always close the stream
+                context.Response.OutputStream.Close();
+            }
         }
 
         public virtual async void ProcessWebSocketRequest(HttpListenerContext context)
@@ -106,6 +171,8 @@ namespace ProtoWebber
             }
 
             WebSocket webSocket = webSocketContext.WebSocket;
+            string webSocketId = WebSocketClients.AddSocket(webSocket);
+
             try
             {
                 Log("[VERBOSE] Websocket is receiving");
@@ -145,7 +212,7 @@ namespace ProtoWebber
                         // If we are just responding to the client's request to close we can just use `WebSocketCloseStatus.NormalClosure` and omit the close message.
 
                         Log("[VERBOSE] Websocket graceful close");
-                        await webSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, string.Empty, CancellationToken.None);
+                        await WebSocketClients.RemoveSocket(WebSocketClients.GetId(webSocket));
                     }
                     else if (receiveResult.MessageType == WebSocketMessageType.Text)
                     {
@@ -225,65 +292,6 @@ namespace ProtoWebber
                     Log("[VERBOSE] Websocket is being disposed");
                     webSocket.Dispose();
                 }
-            }
-        }
-
-        public virtual void ProcessRequest(HttpListenerContext context)
-        {
-            if (context.Request.IsWebSocketRequest)
-            {
-                if (_enableWebsocket)
-                    ProcessWebSocketRequest(context);
-                    
-                return;
-            }
-
-            try
-            {
-                Log(string.Format("[DYNAMIC-REQ] {0}", context.Request.RawUrl));
-
-                // process the request
-                WebResponseData rdata = _processRequest(context.Request);
-
-                // convert response to stream
-                Stream responseData = rdata.Stream;
-
-                if (rdata.MimeType != null)
-                    context.Response.ContentType = rdata.MimeType;
-
-                if (rdata.Headers != null)
-                {
-                    foreach (string header in rdata.Headers.Keys)
-                    {
-                        context.Response.AddHeader(header, (string)rdata.Headers[header]);
-                    }
-                }
-
-                if (responseData != null)
-                {
-                    context.Response.ContentLength64 = responseData.Length;
-                    byte[] buffer = new byte[1024 * 16];
-                    int nbytes;
-                    while ((nbytes = responseData.Read(buffer, 0, buffer.Length)) > 0)
-                    {
-                        context.Response.OutputStream.Write(buffer, 0, nbytes);
-                    }
-                    responseData.Close();
-                }
-
-                context.Response.StatusCode = rdata.StatusCode;
-
-                context.Response.OutputStream.Flush();
-            }
-            catch (Exception ex)
-            {
-                context.Response.StatusCode = (int)HttpStatusCode.InternalServerError;
-                Log(string.Format("[ERROR] {0}", ex));
-            }
-            finally
-            {
-                // always close the stream
-                context.Response.OutputStream.Close();
             }
         }
     }
