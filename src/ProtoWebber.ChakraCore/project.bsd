@@ -14,7 +14,8 @@ package {
 frameworks {
 	net462 {
         compiler {
-            nowarn = ['CS1572', 'CS1573']
+        	# CS4014: call async funcs without await
+            nowarn = ['CS1572', 'CS1573', 'CS4014']
         }
 		dependencies {
 			'System.Net.Http' {

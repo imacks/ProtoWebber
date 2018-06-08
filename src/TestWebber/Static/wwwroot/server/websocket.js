@@ -8,7 +8,7 @@ if (requestText.indexOf(' ') == -1) {
     requestCommand = requestText;
 } else {
     requestCommand = requestText.substring(0, requestText.indexOf(' '));
-    requestValue = requestText.substring(requestText.indexOf(' '));
+    requestValue = requestText.substring(requestText.indexOf(' ') + 1);
 }
 
 if (requestCommand == 'echo') {
@@ -25,7 +25,7 @@ if (requestCommand == 'echo') {
     return outValue
 } else if (requestCommand == 'push') {
     var clientId = requestValue.substring(0, requestValue.indexOf(' '));
-    var message = requestValue.substring(requestValue.indexOf(' '));
+    var message = requestValue.substring(requestValue.indexOf(' ') + 1);
     host.websocketPush(clientId, message);
     return ('pushed to ' + clientId);
 } else {

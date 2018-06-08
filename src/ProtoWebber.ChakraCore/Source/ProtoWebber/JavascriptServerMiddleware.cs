@@ -596,9 +596,8 @@ namespace ProtoWebber
             string socketId = arguments[1].ToString();
             string message = arguments[2].ToString();
 
-            // #todo push across 2 sessions cause server to crash
-            var task = Task.Run(async () => await this.WebSocketClients.SendMessageAsync(socketId, message));
-            task.Wait();
+            // #todo make this async?
+            WebSocketClients.SendMessageAsync(socketId, message);
 
             return JavaScriptValue.Invalid;
         }
