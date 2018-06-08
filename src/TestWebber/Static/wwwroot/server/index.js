@@ -1,5 +1,11 @@
 (function() {
 
+if (host.request.rawUrl == '/favicon.ico') {
+    return {
+        statusCode: 404
+    }
+}
+
 var requestProps = Object.keys(host.request);
 for (var i = 0; i < requestProps.length; i++) {
     var requestKey = requestProps[i];
