@@ -372,9 +372,6 @@ namespace ProtoWebber
             };
         }
 
-
-
-
         public virtual async void ProcessWebSocketRequest(HttpListenerContext context)
         {
             WebSocketContext webSocketContext = null;
@@ -401,7 +398,7 @@ namespace ProtoWebber
             }
 
             WebSocket webSocket = webSocketContext.WebSocket;
-            string webSocketId = WebSocketClients.AddSocket(webSocket);
+            string clientId = WebSocketClients.AddSocket(webSocket);
 
             try
             {
@@ -441,9 +438,8 @@ namespace ProtoWebber
                         // The WebSocket protocol defines different status codes that can be sent as part of a close frame and also allows a close message to be sent. 
                         // If we are just responding to the client's request to close we can just use `WebSocketCloseStatus.NormalClosure` and omit the close message.
 
-                        Log("[VERBOSE] Websocket graceful close");
-                        await WebSocketClients.RemoveSocket(WebSocketClients.GetId(webSocket));
-                        //await webSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, string.Empty, CancellationToken.None);
+                        Log(string.Format("[VERBOSE] Websocket for client {0} graceful close", clientId));
+                        await WebSocketClients.RemoveSocket(clientId);
                     }
                     else if (receiveResult.MessageType == WebSocketMessageType.Text)
                     {
@@ -467,7 +463,7 @@ namespace ProtoWebber
                             using (var reader = new StreamReader(msText, Encoding.UTF8))
                             {
                                 string receiveText = reader.ReadToEnd();
-                                string sendText = ProcessWebSocketTextRequest(receiveText);
+                                string sendText = ProcessWebSocketTextRequest(clientId, receiveText);
                                 byte[] encoded = Encoding.UTF8.GetBytes(sendText);
                                 var sendBuffer = new ArraySegment<byte>(encoded, 0, encoded.Length);
                                 await webSocket.SendAsync(sendBuffer, WebSocketMessageType.Text, true, CancellationToken.None);
@@ -497,7 +493,7 @@ namespace ProtoWebber
                         if (receiveResult.EndOfMessage)
                         {
                             msBin.Seek(0, SeekOrigin.Begin);
-                            Stream sendStream = ProcessWebSocketBinaryRequest(msBin);
+                            Stream sendStream = ProcessWebSocketBinaryRequest(clientId, msBin);
                             sendStream.Seek(0, SeekOrigin.Begin);
                             byte[] sendBytes = new byte[sendStream.Length];
                             sendStream.Read(sendBytes, 0, (int)sendStream.Length);
@@ -520,28 +516,22 @@ namespace ProtoWebber
                 // Clean up by disposing the WebSocket once it is closed/aborted.
                 if (webSocket != null)
                 {
-                    Log("[VERBOSE] Websocket is being disposed");
+                    Log(string.Format("[VERBOSE] Websocket for client {0} is being disposed", clientId));
                     webSocket.Dispose();
                 }
             }
         }
 
-        protected virtual string ProcessWebSocketTextRequest(string text)
+        protected virtual string ProcessWebSocketTextRequest(string clientId, string text)
         {
-            string filename = null;
-            foreach (string extension in this.JavascriptFileExtension)
-            {
-                filename = Path.Combine(this.RootDirectory, "websocket.js");
-                if (File.Exists(filename))
-                    break;
-            }
+            string filename = Path.Combine(this.RootDirectory, "websocket.js");
 
             if (!File.Exists(filename))
                 return "[ERROR 500] Unable to find websocket.js";
 
             try
             {
-                JavaScriptContext context = CreateHostWebsocketContext(_jsRuntime, text, null, false);
+                JavaScriptContext context = CreateHostWebsocketContext(_jsRuntime, clientId, text, null, false);
 
                 using (new JavaScriptContext.Scope(context))
                 {
@@ -573,15 +563,11 @@ namespace ProtoWebber
             return string.Format("[ERROR {0}]", HttpStatusCode.InternalServerError);
         }
 
-        protected virtual Stream ProcessWebSocketBinaryRequest(Stream input)
+        protected virtual Stream ProcessWebSocketBinaryRequest(string clientId, Stream input)
         {
             // not implemented yet #todo
             return input;
         }
-
-
-
-
 
         // --- [Javascripting ] ---
 
@@ -722,7 +708,7 @@ namespace ProtoWebber
             globalObject.SetProperty(propertyId, function, true);
         }
 
-        private JavaScriptContext CreateHostWebsocketContext(JavaScriptRuntime runtime, string text, Stream binaryStream, bool isStream)
+        private JavaScriptContext CreateHostWebsocketContext(JavaScriptRuntime runtime, string clientId, string text, Stream binaryStream, bool isStream)
         {
             // Create the context. Note that if we had wanted to start debugging from the very
             // beginning, we would have called JsStartDebugging right after context is created.
@@ -761,6 +747,7 @@ namespace ProtoWebber
                 {
                     requestParams.SetProperty(JavaScriptPropertyId.FromString("text"), JavaScriptValue.FromString(text), true);
                 }
+                requestParams.SetProperty(JavaScriptPropertyId.FromString("clientId"), JavaScriptValue.FromString(clientId), true);
 
                 hostObject.SetProperty(JavaScriptPropertyId.FromString("request"), requestParams, true);
             }

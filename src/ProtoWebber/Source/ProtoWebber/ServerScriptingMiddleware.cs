@@ -20,21 +20,21 @@ namespace ProtoWebber
         private WebSocketConnectionManager _webSocketClients = new WebSocketConnectionManager();
 
         private Func<HttpListenerRequest, WebResponseData> _processRequest;
-        private Func<string, string> _processWebsocketTextRequest;
-        private Func<Stream, Stream> _processWebsocketBinaryRequest;
+        private Func<string, string, string> _processWebsocketTextRequest;
+        private Func<string, Stream, Stream> _processWebsocketBinaryRequest;
 
         public ServerScriptingMiddleware(Func<HttpListenerContext, bool> acceptRequest, bool enableWebsocket,
             Func<HttpListenerRequest, WebResponseData> processRequest, 
-            Func<string, string> processWebsocketTextRequest, 
-            Func<Stream, Stream> processWebsocketBinaryRequest)
+            Func<string, string, string> processWebsocketTextRequest, 
+            Func<string, Stream, Stream> processWebsocketBinaryRequest)
             : this(new Predicate<HttpListenerContext>(acceptRequest), enableWebsocket, processRequest, processWebsocketTextRequest, processWebsocketBinaryRequest)
         {
         }
 
         public ServerScriptingMiddleware(Predicate<HttpListenerContext> acceptRequest, bool enableWebsocket, 
             Func<HttpListenerRequest, WebResponseData> processRequest, 
-            Func<string, string> processWebsocketTextRequest, 
-            Func<Stream, Stream> processWebsocketBinaryRequest)
+            Func<string, string, string> processWebsocketTextRequest, 
+            Func<string, Stream, Stream> processWebsocketBinaryRequest)
         {
             _enableWebsocket = enableWebsocket;
 
@@ -171,11 +171,11 @@ namespace ProtoWebber
             }
 
             WebSocket webSocket = webSocketContext.WebSocket;
-            string webSocketId = WebSocketClients.AddSocket(webSocket);
+            string clientId = WebSocketClients.AddSocket(webSocket);
 
             try
             {
-                Log("[VERBOSE] Websocket is receiving");
+                Log(string.Format("[VERBOSE] Websocket client {0} is receiving", clientId));
 
                 //### Receiving
                 // Define a receive buffer to hold data received on the WebSocket connection. The buffer will be reused as we only need to hold on to the data
@@ -211,8 +211,8 @@ namespace ProtoWebber
                         // The WebSocket protocol defines different status codes that can be sent as part of a close frame and also allows a close message to be sent. 
                         // If we are just responding to the client's request to close we can just use `WebSocketCloseStatus.NormalClosure` and omit the close message.
 
-                        Log("[VERBOSE] Websocket graceful close");
-                        await WebSocketClients.RemoveSocket(WebSocketClients.GetId(webSocket));
+                        Log(string.Format("[VERBOSE] Websocket client {0} graceful close", clientId));
+                        await WebSocketClients.RemoveSocket(clientId);
                     }
                     else if (receiveResult.MessageType == WebSocketMessageType.Text)
                     {
@@ -220,12 +220,12 @@ namespace ProtoWebber
 
                         if (msText == null)
                         {
-                            Log("[VERBOSE] Websocket text frame");
+                            Log(string.Format("[VERBOSE] Websocket client {0} text frame", clientId));
                             msText = new MemoryStream();
                         }
                         else
                         {
-                            Log("[VERBOSE] Websocket text frame (append)");
+                            Log(string.Format("[VERBOSE] Websocket client {0} text frame append", clientId));
                         }
 
                         msText.Write(receiveBuffer.Array, receiveBuffer.Offset, receiveResult.Count);
@@ -236,7 +236,7 @@ namespace ProtoWebber
                             using (var reader = new StreamReader(msText, Encoding.UTF8))
                             {
                                 string receiveText = reader.ReadToEnd();
-                                string sendText = _processWebsocketTextRequest(receiveText);
+                                string sendText = _processWebsocketTextRequest(clientId, receiveText);
                                 byte[] encoded = Encoding.UTF8.GetBytes(sendText);
                                 var sendBuffer = new ArraySegment<byte>(encoded, 0, encoded.Length);
                                 await webSocket.SendAsync(sendBuffer, WebSocketMessageType.Text, true, CancellationToken.None);
@@ -253,12 +253,12 @@ namespace ProtoWebber
 
                         if (msBin == null)
                         {
-                            Log("[VERBOSE] Websocket bin frame");
+                            Log(string.Format("[VERBOSE] Websocket client {0} bin frame", clientId));
                             msBin = new MemoryStream();
                         }
                         else
                         {
-                            Log("[VERBOSE] Websocket bin frame (append)");
+                            Log(string.Format("[VERBOSE] Websocket client {0} bin frame append", clientId));
                         }
 
                         msBin.Write(receiveBuffer.Array, receiveBuffer.Offset, receiveResult.Count);
@@ -266,7 +266,7 @@ namespace ProtoWebber
                         if (receiveResult.EndOfMessage)
                         {
                             msBin.Seek(0, SeekOrigin.Begin);
-                            Stream sendStream = _processWebsocketBinaryRequest(msBin);
+                            Stream sendStream = _processWebsocketBinaryRequest(clientId, msBin);
                             sendStream.Seek(0, SeekOrigin.Begin);
                             byte[] sendBytes = new byte[sendStream.Length];
                             sendStream.Read(sendBytes, 0, (int)sendStream.Length);
@@ -282,14 +282,14 @@ namespace ProtoWebber
             }
             catch (Exception ex)
             {
-                Log(string.Format("[ERROR] {0}", ex.Message));
+                Log(string.Format("[ERROR] client {0}: {1}", clientId, ex.Message));
             }
             finally
             {
                 // Clean up by disposing the WebSocket once it is closed/aborted.
                 if (webSocket != null)
                 {
-                    Log("[VERBOSE] Websocket is being disposed");
+                    Log(string.Format("[VERBOSE] Websocket for client {0} is being disposed", clientId));
                     webSocket.Dispose();
                 }
             }
