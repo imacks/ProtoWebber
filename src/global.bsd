@@ -21,7 +21,7 @@ dotnetRuntimeUrl = 'https://download.microsoft.com/download/1/1/0/11046135-4207-
 # ------------------
 # Git and CI
 # ------------------
-gitUser = 'imacks'
+gitUser = 'SilviaHyde'
 gitServerUrl = 'https://www.github.com'
 docServerUrl = 'http://'${gitUser}'.github.io'
 
