@@ -71,6 +71,21 @@ namespace ProtoWebber
             }
         }
 
+        public void SendMessage(WebSocket socket, string message)
+        {
+            SendMessageAsync(socket, message);
+        }
+
+        public void SendMessage(string socketId, string message)
+        {
+            SendMessageAsync(socketId, message);
+        }
+
+        public void SendMessageToAll(string message)
+        {
+            SendMessageToAllAsync(message);
+        }
+
         private string CreateConnectionId()
         {
             return Guid.NewGuid().ToString();
