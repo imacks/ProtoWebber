@@ -2,6 +2,9 @@
 assemblyDescription = 'Simple web server for local development and testing.'
 clsCompliant = true
 allowPartialTrust = true
+compiler {
+	noWarn = [ 'CS1591' ]
+}
 package {
 	output {
 		nuget {

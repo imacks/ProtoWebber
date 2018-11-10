@@ -3,6 +3,9 @@
 assemblyDescription = 'Server side scripting middleware for ProtoWebber, powered by the awesome ChakraCore javascript engine.'
 clsCompliant = true
 allowPartialTrust = true
+compiler {
+	noWarn = [ 'CS1591' ]
+}
 package {
 	output {
 		nuget {
