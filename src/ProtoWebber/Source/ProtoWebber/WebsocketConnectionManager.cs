@@ -50,8 +50,10 @@ namespace ProtoWebber
             if (socket.State != WebSocketState.Open)
                 return;
 
+            byte[] payload = Encoding.UTF8.GetBytes(message);
+
             await socket.SendAsync(
-                buffer: new ArraySegment<byte>(Encoding.UTF8.GetBytes(message), 0, message.Length),
+                buffer: new ArraySegment<byte>(payload, 0, payload.Length),
                 messageType: WebSocketMessageType.Text,
                 endOfMessage: true,
                 cancellationToken: CancellationToken.None);
