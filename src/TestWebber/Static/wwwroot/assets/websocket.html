@@ -8,26 +8,26 @@
   socketTest = {
     socket: null,
     connect: function(wsUrl) {
-      socket = new WebSocket(wsUrl);
-      socket.onopen = function(ev) {
+      this.socket = new WebSocket(wsUrl);
+      this.socket.onopen = function(ev) {
         socketTest.writeToScreen('<span style="color: green;">CONNECTED to the websocket server!</span>');
       };
-      socket.onclose = function(ev) {
+      this.socket.onclose = function(ev) {
         socketTest.writeToScreen('<span style="color: brown;">DISCONNECTED</span>');
       };
-      socket.onmessage = function(ev) {
+      this.socket.onmessage = function(ev) {
         socketTest.writeToScreen('<span style="color: blue;">RESPONSE: ' + ev.data+'</span>');
       };
-      socket.onerror = function(ev) {
+      this.socket.onerror = function(ev) {
         socketTest.writeToScreen('<span style="color: red;">ERROR:</span> ' + ev.data);
       }
     },
     disconnect: function() {
-      socket.close();
-      socket = null;
+      this.socket.close();
+      this.socket = null;
     },
     sendMessage: function(msg) {
-      socket.send(msg);
+      this.socket.send(msg);
       this.writeToScreen('<span style="color: orange">SENT: </span>' + msg);
       document.getElementById('messagebox').value = '';
     },
