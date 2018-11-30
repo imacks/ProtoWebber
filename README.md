@@ -79,6 +79,15 @@ testwebber -m -.tiff -m .foo:text/csv
 ```
 
 
+Serving Remote Clients
+----------------------
+ProtoWebber is primarily designed to run locally, meaning you can only access the webserver that ProtoWebber is running on. To make your computer into a real webserver others can access, there are a couple of things to do:
+- Run `testwebber` with administrative privileges
+- Run with argument `-i http://*:8080/`
+- Configure Windows firewall to allow inbound connection to port `8080`.
+- Make sure your LAN router firewall is not configured to block inter-client TCP connections
+
+
 Building
 --------
 **Important!** You probably want to change the location where packages will be stored.
