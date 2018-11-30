@@ -131,7 +131,7 @@ namespace TestWebber
 		{
             PrintHeader();
 
-            Console.WriteLine("testwebber [-d path] [-h hostname] [-!ss | -s server] [-t] [-k] [-a asset] [-m extension:mimetype] [-v]");
+            Console.WriteLine("testwebber [-d path] [-i hostname] [-!ss | -s server] [-t] [-k] [-a asset] [-m extension:mimetype] [-v]");
 			Console.WriteLine("testwebber --show-mimetypes");
 			Console.WriteLine("testwebber -ver");
 			Console.WriteLine("testwebber -h");
@@ -140,6 +140,7 @@ namespace TestWebber
 			Console.WriteLine(@"                  Default is <CurrentDir>\wwwroot");
 			Console.WriteLine(@"-i|--hostname     Host name to listen. May be specified more than once.");
 			Console.WriteLine(@"                  Default is http://localhost:8080/");
+            Console.WriteLine(@"                  To serve externally, runas admin and specify http://*:8080/");
             Console.WriteLine(@"-k|--websocket    Enables websocket feature.");
             Console.WriteLine(@"-!ss|--disableserverscript");
             Console.WriteLine(@"                  Disables server side scripting.");
@@ -172,6 +173,10 @@ namespace TestWebber
             Console.WriteLine("# - If all else fails, webserver will return a 404 error.");
             Console.WriteLine("testwebber");
 			Console.WriteLine();
+            Console.WriteLine("# Allows everybody to connect to your webserver");
+            Console.WriteLine("# You need to run testwebber as admin");
+            Console.WriteLine("testwebber -i http://*:8080/");
+            Console.WriteLine();
             Console.WriteLine("# Disables server side scripting. Serves everything under (CurrentDir)/wwwroot/assets and (CurrentDir)/wwwroot/pages as static files.");
             Console.WriteLine("testwebber -a assets -a pages -!ss");
 			Console.WriteLine();
